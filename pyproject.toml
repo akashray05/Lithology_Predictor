@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lithology-predictor"
+version = "0.1.0"
+description = "Machine-learning system for lithology prediction from well-log data"
+requires-python = ">=3.13,<3.14"
+
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "scikit-learn",
+    "lasio",
+    "matplotlib",
+    "plotly",
+    "xgboost",
+    "catboost",
+    "joblib",
+    "pyarrow"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "jupyter",
+    "ipykernel"
+]

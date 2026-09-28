@@ -1,0 +1,27 @@
+# Core scientific stack
+numpy
+pandas
+scipy
+scikit-learn
+
+# Well-log data
+lasio
+
+# Visualization
+matplotlib
+plotly
+
+# Machine learning
+xgboost
+catboost
+
+# Model persistence
+joblib
+
+# Data formats
+pyarrow
+
+# Development
+pytest
+jupyter
+ipykernel
