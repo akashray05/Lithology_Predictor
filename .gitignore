@@ -40,3 +40,19 @@ models/
 # IDE
 .vscode/
 .idea/
+
+
+# Generated datasets
+notebooks/*.csv
+
+# Generated plots/images
+notebooks/images/
+*.jpg
+*.jpeg
+
+# Results
+results/
+
+# Experimental notebooks
+# Uncomment if you don't want experimental notebooks in GitHub
+# notebooks/*experimental*.ipynb
