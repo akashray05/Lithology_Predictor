@@ -15,7 +15,7 @@ from src.plots import LITH_ORDER, MODEL_COLORS
 LITH_COLORS = {
     "Sandstone": "#F4D03F",
     "Sandstone/Shale": "#F5B041",
-    "Shale": "#AAB0B6",
+    "Shale": "#32567A",
     "Marl": "#7D9B4E",
     "Limestone": "#5DADE2",
     "Chalk": "#F7E7B4",
@@ -24,7 +24,7 @@ LITH_COLORS = {
     "Halite": "#D7A6C7",
     "Coal": "#1A1A1A",
     "Basement": "#6C3483",
-    "Tuff": "#BA4A00",
+    "Tuff": "#07760D",
 }
 assert set(LITH_COLORS) == set(LITH_ORDER)
 
