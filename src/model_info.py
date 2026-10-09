@@ -27,13 +27,13 @@ SHARED = [
 
 FEATURE_GROUPS = [
     ("5", "Base log features", "GR, RDEP_LOG10, RMED_LOG10, DTC, RHOB",
-     "Gamma ray, deep and medium resistivity (log-transformed), sonic travel time and bulk density.", "#2E7D32"),
+     "Gamma ray, deep and medium resistivity (log-transformed), sonic travel time and bulk density."),
     ("30", "Rolling-statistic features", "Mean and std of each base log",
-     "Windows of 5, 9 and 21 samples. They capture local log patterns and changes with depth.", "#1565C0"),
+     "Windows of 5, 9 and 21 samples. They capture local log patterns and changes with depth."),
     ("1", "Resistivity separation", "RESISTIVITY_SEPARATION",
-     "Difference between the deep and medium resistivity responses.", "#EF6C00"),
+     "Difference between the deep and medium resistivity responses."),
     ("5", "Missingness indicators", "One per base log",
-     "Lets the models use information about which measurements are missing.", "#6A1B9A"),
+     "Lets the models use information about which measurements are missing."),
 ]
 FEATURE_NOTE = ("The 41 features are shared across the models, so the comparison measures differences between "
                 "the learning algorithms and their trained configurations, not differences in input schema.")
@@ -42,7 +42,7 @@ MODELS = [
     {
         "name": "Ex-Tree", "full": "ExtraTrees Classifier (internal name: W5)",
         "role": "Selected production candidate", "algorithm": "Extremely Randomized Trees (ExtraTrees)",
-        "color": "#1F77B4", "icon": "🌳",
+        "color": "#1F4E79", "icon": "",
         "summary": ("An ensemble that combines predictions from many randomized decision trees. Each tree learns "
                     "different decision rules from the well-log features, and the ensemble combines them to "
                     "classify lithology at each depth."),
@@ -62,7 +62,7 @@ MODELS = [
     {
         "name": "XGBoost", "full": "Tuned Gradient-Boosted Trees",
         "role": "Alternative boosted-tree model", "algorithm": "Extreme Gradient Boosting (XGBoost)",
-        "color": "#D62728", "icon": "🚀",
+        "color": "#6B2E22", "icon": "",
         "summary": ("Builds an ensemble of decision trees sequentially. Each new tree learns patterns associated "
                     "with the remaining prediction errors, and the final prediction combines all trees."),
         "trained": [
@@ -83,7 +83,7 @@ MODELS = [
     {
         "name": "LightGBM", "full": "Tuned Gradient-Boosted Trees",
         "role": "Alternative boosted-tree model", "algorithm": "Light Gradient Boosting Machine (LightGBM)",
-        "color": "#2CA02C", "icon": "⚡",
+        "color": "#2C4A3E", "icon": "",
         "summary": ("A gradient-boosting framework designed for efficient tree-based learning. It grows trees "
                     "leaf-wise, choosing splits that improve the objective while applying constraints to control "
                     "model complexity."),
@@ -125,7 +125,6 @@ def _model_card(m: dict) -> None:
     st.markdown(
         f'<div class="model-card" style="border-color:{m["color"]}">'
         f'<div class="model-head" style="background:{m["color"]}">'
-        f'<span class="model-icon">{m["icon"]}</span>'
         f'<span class="model-name">{m["name"]}</span>'
         f'<span class="model-role">{m["role"]}</span></div>'
         f'<div class="model-algo"><b>Algorithm:</b> {m["algorithm"]}</div></div>',
@@ -144,7 +143,7 @@ def _model_card(m: dict) -> None:
 
 
 def render_model_guide() -> None:
-    st.markdown("## 📘 Model guide")
+    st.markdown("## Model notes")
     st.markdown(INTRO)
 
     st.markdown("### What all three models have in common")
@@ -152,17 +151,17 @@ def render_model_guide() -> None:
 
     st.markdown("### The 41 input features")
     cols = st.columns(4)
-    for col, (num, title, names, desc, color) in zip(cols, FEATURE_GROUPS):
+    for col, (num, title, names, desc) in zip(cols, FEATURE_GROUPS):
         col.markdown(
-            f'<div class="feat-card" style="border-top:6px solid {color}">'
-            f'<div class="feat-num" style="color:{color}">{num}</div>'
+            f'<div class="feat-card">'
+            f'<div class="feat-num">{num}</div>'
             f'<h4>{title}</h4><code>{names}</code><p>{desc}</p></div>',
             unsafe_allow_html=True,
         )
     st.caption(FEATURE_NOTE)
 
     st.markdown("### Model architectures")
-    tabs = st.tabs([f'{m["icon"]} {m["name"]}' for m in MODELS])
+    tabs = st.tabs([m["name"] for m in MODELS])
     for tab, m in zip(tabs, MODELS):
         with tab:
             _model_card(m)
@@ -175,7 +174,7 @@ def render_model_guide() -> None:
     text = pd.DataFrame({c: [_fmt(i, v) for i, v in df[c].items()] for c in df.columns}, index=df.index)
     best = df.idxmax(axis=1)  # higher is better for every row (FORCE penalty is negative: max = closest to 0)
     styled = text.style.apply(
-        lambda row: ["background-color:#ffe08a;font-weight:700;color:#222" if c == best[row.name] else ""
+        lambda row: ["background-color:#d5ddd6;font-weight:600;color:#1e2420" if c == best[row.name] else ""
                      for c in row.index], axis=1)
     st.dataframe(styled, use_container_width=True)
     st.caption(RESULTS_NOTE + " Highlighted = best in each row.")

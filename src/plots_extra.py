@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from src.inference import LITHOLOGY_NAMES
-from src.theme import VIVID_COLORS as LITHOLOGY_COLORS
+from src.theme import LITH_COLORS as LITHOLOGY_COLORS
 from src.plots import (
     CURVE_COLORS,
     LITH_ORDER,

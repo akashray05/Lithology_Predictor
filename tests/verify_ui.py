@@ -24,10 +24,12 @@ def check(ok: bool, msg: str) -> None:
 
 # ---- 1. files exist and contain the newest features --------------------------------
 MARKERS = {
-    "app_v2.py": ["assets\" / \"style.css", "build_crossplot_compare", "style_figure", "Original vs model(s)"],
+    "app_v2.py": ["assets\" / \"style.css", "build_crossplot_compare", "style_figure",
+                  "Original vs model(s)", "Statistics", "lithology_mix"],
     "src/plots_extra.py": ["def build_crossplot_compare", "def boundary_analysis", "def consensus"],
-    "src/theme.py": ["VIVID_COLORS", "def style_figure", "open"],
-    "assets/style.css": ["aria-selected", "@keyframes shift"],
+    "src/theme.py": ["LITH_COLORS", "VIVID_COLORS", "def style_figure", "open"],
+    "src/well_stats.py": ["def curve_summary", "def pairwise_kappa", "def lithology_mix"],
+    "assets/style.css": ["aria-selected", "masthead", "well-line"],
     ".streamlit/config.toml": ["primaryColor"],
 }
 for rel, needles in MARKERS.items():
@@ -41,7 +43,7 @@ for rel, needles in MARKERS.items():
         check(n in text, f"{rel} contains '{n}'  (newest version installed)")
 
 # ---- 2. syntax -------------------------------------------------------------------
-for rel in ("app_v2.py", "src/plots_extra.py", "src/theme.py"):
+for rel in ("app_v2.py", "src/plots_extra.py", "src/theme.py", "src/well_stats.py"):
     try:
         py_compile.compile(str(ROOT / rel), doraise=True)
         check(True, f"{rel} compiles")
@@ -77,7 +79,7 @@ try:
 
     f = style_figure(build_tracks_figure(df, models, curves=["GR"]))
     hm = [t for t in f.data if t.type == "heatmap"]
-    check(hm and hm[0].colorscale[0][1] == VIVID_COLORS["Sandstone"], "tracks use the vivid lithology palette")
+    check(hm and hm[0].colorscale[0][1] == VIVID_COLORS["Sandstone"], "tracks use the FORCE lithology palette")
     sw = [t.marker.size for t in f.data if t.type == "scatter" and t.x is not None and len(t.x) == 1]
     check(sw and min(sw) >= 20, "legend swatches are enlarged")
 
@@ -91,6 +93,16 @@ try:
     check(len(boundary_analysis(df, models)) == 2, "boundary analysis returns one row per model")
     build_consensus_figure(df, models)
     check(True, "consensus figure builds")
+
+    from src.well_stats import curve_summary, lithology_mix, pairwise_kappa, transition_table
+    cs = curve_summary(df)
+    check(list(cs["Curve"]) == ["GR", "RDEP", "RMED", "DTC", "RHOB"], "curve summary covers the five logs")
+    mix = lithology_mix(df, models, include_true=True)
+    check(not mix.empty and set(mix["Source"]) >= {"Original", "W5", "XGBoost"}, "lithology mix has original and models")
+    kap = pairwise_kappa(df, models)
+    check(kap.shape == (3, 3) and np.allclose(np.diag(kap), 1), "kappa matrix includes original and is 1 on the diagonal")
+    trans = transition_table(df, "TRUE_LITHOLOGY")
+    check("Contacts" in trans.columns, "transition table lists bed contacts")
 except Exception as exc:  # noqa: BLE001
     check(False, f"synthetic figure checks: {type(exc).__name__}: {exc}")
 
