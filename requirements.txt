@@ -25,3 +25,4 @@ pyarrow
 pytest
 jupyter
 ipykernel
+streamlit
