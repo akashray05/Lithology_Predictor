@@ -9,11 +9,13 @@ import streamlit as st
 
 from src.evaluation import (
     confusion_counts,
+    describe_labels,
     overall_metrics,
     per_class_report,
 )
 from src.inference import (
     detect_label_column,
+    label_diagnostics,
     load_inference_bundle,
     predict_well,
     read_uploaded_file,
@@ -27,7 +29,7 @@ from src.plots import (
 # ============================================================
 # PAGE CONFIGURATION
 # ============================================================
-st.set_page_config(page_title="Lithology Predictor", page_icon="😁", layout="wide")
+st.set_page_config(page_title="Lithology Predictor", page_icon="🪨", layout="wide")
 
 st.markdown(
     """
@@ -44,7 +46,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("Lithology Prediction And comparison of Models")
+st.title("🪨 Lithology Predictor")
 st.caption("Machine-learning lithology prediction from well-log data, with optional comparison to the original lithology.")
 
 MODEL_OPTIONS = {"W5": "W5", "XGBoost": "XGBOOST", "LightGBM": "LIGHTGBM"}
@@ -164,15 +166,28 @@ except Exception as exc:
     st.error(f"Prediction failed: {exc}")
     st.stop()
 
-has_truth = "TRUE_CODE" in predictions.columns and predictions["TRUE_CODE"].notna().any()
-if label_column and not has_truth:
-    st.sidebar.warning("The chosen column has no recognised lithology codes or names.")
-
 depth_col, depth_label = "DEPT", "Depth"
 if predictions["DEPT"].notna().sum() == 0:
     predictions = predictions.assign(DEPT=predictions["SOURCE_ROW"].astype(float))
     depth_label = "Sample index (no depth column found)"
     st.sidebar.warning("No depth column found; using sample index.")
+
+# A label column that merely EXISTS is not ground truth. Only samples with a
+# decoded lithology count; everything else is reported honestly below.
+try:
+    label_diag = label_diagnostics(raw_df, label_column) if label_column else None
+except Exception:
+    label_diag = None
+label_info = describe_labels(predictions, label_diag, depth_col=depth_col)
+has_truth = label_info["labelled"] > 0
+
+
+def show_label_status():
+    """Render the actual label situation (none / empty / partial / full)."""
+    getattr(st, label_info["level"])(label_info["message"])
+
+
+getattr(st.sidebar, label_info["level"])(label_info["message"])
 
 models = [(name, MODEL_OPTIONS[name]) for name in selected_models]
 
@@ -189,12 +204,47 @@ if d_max > d_min:
 else:
     depth_range = (d_min, d_max)
 
-show_true = st.sidebar.checkbox("Show original lithology track", value=True, disabled=not has_truth)
-show_errors = st.sidebar.checkbox("Show error tracks", value=True, disabled=not has_truth)
+show_true_req = st.sidebar.checkbox(
+    "Show original lithology track",
+    value=True,
+    disabled=not has_truth,
+    help="Predictions are always shown. This only adds/removes the original track."
+    if has_truth else "Unavailable: no usable original lithology labels in this file.",
+)
+# Streamlit returns the stored value for a disabled checkbox, so combine with has_truth.
+show_true = bool(show_true_req and has_truth)
+
+show_errors_req = st.sidebar.checkbox(
+    "Show error tracks (original vs model)",
+    value=True,
+    disabled=not show_true,
+    help="Needs the original lithology track to be shown."
+    if show_true else "Unavailable: turn on the original lithology track (needs valid labels).",
+)
+show_errors = bool(show_errors_req and show_true)
+
+crop_labelled_req = st.sidebar.checkbox(
+    "Limit plots to the labelled interval",
+    value=False,
+    disabled=label_info["status"] != "partial",
+    help="Hide depths above/below where the original lithology exists."
+    if label_info["status"] == "partial" else "Only relevant when labels cover part of the well.",
+)
+crop_labelled = bool(crop_labelled_req and label_info["status"] == "partial")
+
 show_confidence = st.sidebar.checkbox("Show confidence track", value=False)
 curves = st.sidebar.multiselect("Log curves to show", REQUIRED_CURVES, default=["GR"])
 plot_height = st.sidebar.slider("Plot height (px)", 500, 2000, 950, step=50)
 st.sidebar.caption("Predictions are estimates, not verified geological truth.")
+
+if crop_labelled and label_info["depth_min"] is not None:
+    depth_range = (
+        max(depth_range[0], label_info["depth_min"]),
+        min(depth_range[1], label_info["depth_max"]),
+    )
+    if depth_range[0] > depth_range[1]:
+        st.warning("The selected depth interval does not overlap the labelled interval.")
+        st.stop()
 
 view_df = predictions[predictions[depth_col].between(*depth_range)]
 if view_df.empty:
@@ -267,10 +317,13 @@ with tab_overview:
 # LITHOLOGY TRACKS
 # ------------------------------------------------------------
 with tab_tracks:
-    if has_truth:
-        st.caption("True lithology on the left, then each selected model's prediction with a red/green error strip. Drag to zoom, double-click to reset.")
+    show_label_status()
+    if show_errors:
+        st.caption("Original lithology on the left, then each selected model's prediction with a green/red error strip (blank = no original label). Drag to zoom, double-click to reset.")
+    elif show_true:
+        st.caption("Original lithology next to each selected model's prediction. Drag to zoom, double-click to reset.")
     else:
-        st.caption("Predicted lithology for each selected model. Add a lithology column to your file to compare against the original. Drag to zoom, double-click to reset.")
+        st.caption("Predicted lithology for each selected model, shown without a reference. Drag to zoom, double-click to reset.")
 
     try:
         fig_tracks = build_tracks_figure(
@@ -306,11 +359,12 @@ with tab_tracks:
 # EVALUATION
 # ------------------------------------------------------------
 with tab_eval:
+    show_label_status()
     if not has_truth:
-        st.info(
-            "No original lithology found. Include a column such as "
-            "`FORCE_2020_LITHOFACIES_LITHOLOGY` (codes) or `LITHOLOGY` (names) in your "
-            "file, or pick it in the sidebar, to see accuracy, FORCE score and the confusion matrix."
+        st.caption(
+            "Accuracy, FORCE score and the confusion matrix need valid original labels, "
+            "for example a `FORCE_2020_LITHOFACIES_LITHOLOGY` (codes) or `LITHOLOGY` "
+            "(names) column with values. Nothing is calculated without them."
         )
     else:
         use_view = st.checkbox("Evaluate only the selected depth interval", value=False)
@@ -329,7 +383,11 @@ with tab_eval:
             metrics = overall_metrics(y_true, preds)
             best = metrics.loc[metrics["FORCE score"].idxmax()]
             b1, b2, b3 = st.columns(3)
-            b1.metric("Labelled samples", f"{len(eval_df):,}")
+            b1.metric(
+                "Labelled samples used",
+                f"{len(eval_df):,}",
+                help="Only samples with a valid original label are scored; unlabelled samples are excluded.",
+            )
             b2.metric("Best FORCE score", f"{best['FORCE score']:.4f}", help="Negative mean penalty; closer to zero is better.")
             b3.metric("Best model (FORCE)", str(best["Model"]))
 
@@ -382,10 +440,11 @@ with tab_data:
 
     st.subheader("Prediction table")
     output_columns = [
-        c for c in ["SOURCE_ROW", "DEPT", "GR", "RDEP", "RMED", "DTC", "RHOB", "WELL",
-                    "TRUE_CODE", "TRUE_LITHOLOGY"]
+        c for c in ["SOURCE_ROW", "DEPT", "GR", "RDEP", "RMED", "DTC", "RHOB", "WELL"]
         if c in predictions.columns
     ]
+    if has_truth:  # never export an empty "original lithology" column as if it were data
+        output_columns += ["TRUE_CODE", "TRUE_LITHOLOGY"]
     for name, key in models:
         output_columns += [
             f"{key}_PREDICTION_CODE", f"{key}_PREDICTION", f"{key}_CONFIDENCE"

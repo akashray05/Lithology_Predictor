@@ -24,6 +24,8 @@ ENV/
 data/raw/
 data/interim/
 data/processed/
+# Convenience LAS copies (too large for GitHub; keep split_manifest.csv)
+data/splits/wells/**/*.las
 
 # Generated notebook outputs
 notebooks/visualization_result/

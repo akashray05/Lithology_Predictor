@@ -174,6 +174,47 @@ def _decode_true_labels(series: pd.Series) -> pd.Series:
     return codes.fillna(from_names).astype(float)
 
 
+decode_true_labels = _decode_true_labels  # public name
+
+# Text/number values that mean "no label" in a raw lithology column.
+_EMPTY_LABEL_TEXT = {"", "NONE", "NAN", "NULL", "NA", "N/A", "-999", "-999.25", "-9999"}
+
+
+def label_diagnostics(raw_df: pd.DataFrame, label_column: str | None) -> dict:
+    """Describe what a raw label column really contains.
+
+    A column *existing* does not mean usable labels exist. Counts are over the
+    raw file (before depth-less / all-missing rows are dropped):
+
+        empty        - missing / "None" / null-sentinel values
+        recognised   - valid FORCE codes or lithology names
+        unrecognised - non-empty values that are not a known lithology
+    """
+    if label_column is None:
+        return {"column": None, "rows": len(raw_df), "empty": 0, "recognised": 0,
+                "unrecognised": 0, "unrecognised_examples": {}}
+
+    lookup = {str(c).strip().upper(): c for c in raw_df.columns}
+    key = str(label_column).strip().upper()
+    if key not in lookup:
+        raise InferenceError(f"Label column '{label_column}' not found in the file.")
+
+    series = raw_df[lookup[key]]
+    as_text = series.astype(str).str.strip()
+    empty = series.isna() | as_text.str.upper().isin(_EMPTY_LABEL_TEXT)
+    recognised = _decode_true_labels(series).notna()
+    unrecognised = ~empty & ~recognised
+
+    return {
+        "column": str(label_column),
+        "rows": int(len(series)),
+        "empty": int(empty.sum()),
+        "recognised": int(recognised.sum()),
+        "unrecognised": int(unrecognised.sum()),
+        "unrecognised_examples": as_text[unrecognised].value_counts().head(5).to_dict(),
+    }
+
+
 def _make_base_features(
     raw_df: pd.DataFrame, label_column: str | None = None
 ) -> tuple[pd.DataFrame, pd.DataFrame]:

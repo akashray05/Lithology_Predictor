@@ -1,0 +1,9 @@
+[theme]
+primaryColor = "#C8553D"
+font = "sans serif"
+
+[server]
+maxUploadSize = 500
+
+[browser]
+gatherUsageStats = false

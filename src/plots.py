@@ -159,7 +159,15 @@ def build_tracks_figure(
         raise ValueError("No samples in the selected depth range.")
 
     depth = d[depth_col].to_numpy(float)
-    has_true = "TRUE_LITHOLOGY" in d.columns and d["TRUE_LITHOLOGY"].notna().any()
+    # Ground truth exists only if at least one visible sample has a decoded label;
+    # an empty/"None" label column is NOT ground truth.
+    has_true = (
+        "TRUE_LITHOLOGY" in d.columns
+        and "TRUE_CODE" in d.columns
+        and bool(d["TRUE_CODE"].notna().any())
+    )
+    # Error strips compare model vs original, so they need the original track.
+    draw_errors = has_true and show_true and show_errors
     models = [(n, k) for n, k in models if f"{k}_PREDICTION" in d.columns]
     conf_models = [(n, k) for n, k in models if f"{k}_CONFIDENCE" in d.columns]
     curves = [c for c in curves if c in d.columns]
@@ -175,7 +183,7 @@ def build_tracks_figure(
         subtitle = f"<br><sup>{acc:.1%} acc</sup>" if acc is not None else ""
         tracks.append({"kind": "pred", "title": f"{name}{subtitle}", "width": 0.8,
                        "name": name, "key": key})
-        if has_true and show_errors:
+        if draw_errors:
             tracks.append({"kind": "error", "title": "Err", "width": 0.22,
                            "name": name, "key": key})
     if show_confidence and conf_models:
@@ -248,12 +256,15 @@ def build_tracks_figure(
                 marker=dict(symbol="square", size=13, color=LITHOLOGY_COLORS[name],
                             line=dict(width=0.5, color="#333")),
             ), row=1, col=1)
-    if has_true and show_errors and any(t["kind"] == "error" for t in tracks):
-        for label, color in zip(("Correct", "Wrong"), ERROR_COLORS):
+    if draw_errors and any(t["kind"] == "error" for t in tracks):
+        legend_items = list(zip(("Correct", "Wrong"), ERROR_COLORS))
+        if d["TRUE_CODE"].isna().any():
+            legend_items.append(("No original label", "#FFFFFF"))
+        for label, color in legend_items:
             fig.add_trace(go.Scatter(
                 x=[None], y=[None], mode="markers", name=label,
                 marker=dict(symbol="square", size=13, color=color,
-                            line=dict(width=0.5, color="#333")),
+                            line=dict(width=0.8, color="#333")),
             ), row=1, col=1)
 
     # ---- axes / layout -----------------------------------------------------
@@ -290,7 +301,14 @@ def build_distribution_figure(
 ) -> go.Figure:
     """Grouped bars: share of each lithology for True and each selected model."""
     sources: list[tuple[str, pd.Series]] = []
-    if include_true and "TRUE_LITHOLOGY" in df.columns and df["TRUE_LITHOLOGY"].notna().any():
+    labelled_only = False
+    if (include_true and "TRUE_LITHOLOGY" in df.columns and "TRUE_CODE" in df.columns
+            and df["TRUE_CODE"].notna().any()):
+        # Compare like with like: when True is shown, every bar uses only the
+        # samples that have an original label (otherwise a partially labelled
+        # well would compare different depth intervals).
+        df = df[df["TRUE_CODE"].notna()]
+        labelled_only = True
         sources.append(("True", df["TRUE_LITHOLOGY"]))
     for name, key in models:
         if f"{key}_PREDICTION" in df.columns:
@@ -321,6 +339,11 @@ def build_distribution_figure(
         yaxis_title="Share of samples (%)", xaxis_title=None,
         legend=dict(orientation="h", y=1.1, x=0),
     )
+    if labelled_only:
+        fig.add_annotation(
+            text="Labelled samples only", xref="paper", yref="paper",
+            x=1, y=1.12, showarrow=False, font=dict(size=11, color="#667"),
+        )
     return fig
 
 
