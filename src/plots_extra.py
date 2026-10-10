@@ -1,3 +1,6 @@
+
+
+
 """Extra figures and analysis helpers for the upgraded Lithology Predictor UI.
 
 Adds model-comparison, calibration, boundary-error and geology views on top of
@@ -11,9 +14,10 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from sklearn.metrics import confusion_matrix
 
 from src.inference import LITHOLOGY_NAMES
-from src.theme import LITH_COLORS as LITHOLOGY_COLORS
+from src.theme import FIGURE_LAYOUT, LITH_COLORS as LITHOLOGY_COLORS
 from src.plots import (
     CURVE_COLORS,
     LITH_ORDER,
@@ -62,13 +66,33 @@ def pairwise_agreement(df: pd.DataFrame, models: list[tuple[str, str]]) -> pd.Da
     return pd.DataFrame(mat, index=names, columns=names)
 
 
+
 def build_pairwise_figure(mat: pd.DataFrame) -> go.Figure:
     fig = px.imshow(
-        mat, zmin=0, zmax=1, text_auto=".1%", aspect="auto",
+        mat,
+        zmin=0,
+        zmax=1,
+        text_auto=False,
+        aspect="auto",
         color_continuous_scale="Blues",
         labels=dict(color="Agreement"),
     )
-    fig.update_layout(template="plotly_white", height=360, margin=dict(t=20, b=20))
+
+    # Display agreement values as percentages inside the cells.
+    for i in range(len(mat.index)):
+        for j in range(len(mat.columns)):
+            fig.add_annotation(
+                x=j,
+                y=i,
+                text=f"{mat.iloc[i, j]:.1%}",
+                showarrow=False,
+            )
+
+    fig.update_layout(
+        template="plotly_white",
+        height=360,
+        margin=dict(t=20, b=20),
+    )
     return fig
 
 
@@ -300,9 +324,12 @@ def bed_thickness_table(
         tmp = pd.DataFrame({"run": run, "code": codes, "valid": valid})
         g = tmp[tmp["valid"]].groupby("run").agg(code=("code", "first"), n=("code", "size"))
         g["thick"] = g["n"] * step
-        for code, sub in g.groupby("code"):
+        # for code, sub in g.groupby("code"):
+        for code, sub in g.groupby("code", sort=False):
+
+            code_int = int(code)  # type: ignore[arg-type]
             rows.append({
-                "Source": src, "Lithology": LITHOLOGY_NAMES[int(code)],
+                "Source": src, "Lithology": LITHOLOGY_NAMES[code_int],
                 "Beds": int(len(sub)), "Mean thickness": float(sub["thick"].mean()),
                 "Max thickness": float(sub["thick"].max()),
             })
@@ -426,4 +453,102 @@ def build_crossplot_compare(
                       legend=dict(title="Lithology"))
     fig.update_xaxes(showgrid=True, gridcolor="rgba(130,145,165,0.22)")
     fig.update_yaxes(showgrid=True, gridcolor="rgba(130,145,165,0.22)")
+    return fig
+
+
+# --------------------------------------------------------------------------
+# Confusion matrices for several models, side by side
+# --------------------------------------------------------------------------
+def build_confusion_grid(
+    y_true,
+    preds: dict[str, np.ndarray],
+    normalize: bool = True,
+    label_mode: str = "code",
+    show_values: bool = False,
+    height: int = 540,
+    title: str | None = None,
+) -> go.Figure:
+    """One confusion matrix per model, in a row, on the same axes and colour scale.
+
+    Style follows the FORCE 2020 blind-test figure: true lithology down the
+    side, predicted across the bottom, viridis colours, one shared colour bar.
+
+    Args:
+        y_true: true FORCE lithology codes (labelled samples only).
+        preds: {model display name: predicted FORCE codes}, same length as y_true.
+        normalize: True = each row shows the share of that TRUE class (rows sum to 1);
+            False = raw sample counts.
+        label_mode: "code" (30000, 65000, ...) or "name" (Sandstone, Shale, ...).
+        show_values: print the value inside each non-empty cell.
+
+    Every panel uses the union of classes seen in the truth or in ANY model, so
+    panels line up and a class one model invents is visible in all of them.
+    A class with no true samples has an all-zero row (not NaN).
+    """
+    y_true = np.asarray(y_true).astype(int)
+    if y_true.size == 0:
+        raise ValueError("No labelled samples to build a confusion matrix.")
+    if not preds:
+        raise ValueError("Select at least one model.")
+    clean: dict[str, np.ndarray] = {}
+    for name, p in preds.items():
+        p = np.asarray(p).astype(int)
+        if p.shape != y_true.shape:
+            raise ValueError(f"{name}: {p.size} predictions for {y_true.size} true labels.")
+        clean[name] = p
+
+    labels = sorted(set(y_true.tolist()) | set(np.concatenate(list(clean.values())).tolist()))
+    ticks = [str(c) if label_mode == "code" else LITHOLOGY_NAMES.get(c, str(c)) for c in labels]
+
+    counts = {n: confusion_matrix(y_true, p, labels=labels) for n, p in clean.items()}
+    norm = {}
+    for n, c in counts.items():
+        rows = c.sum(axis=1, keepdims=True)
+        norm[n] = np.divide(c, rows, out=np.zeros(c.shape, dtype=float), where=rows > 0)
+
+    names = list(clean)
+    fig = make_subplots(rows=1, cols=len(names), shared_yaxes=True, subplot_titles=names,
+                        horizontal_spacing=0.03)
+    for j, n in enumerate(names, start=1):
+        z = norm[n] if normalize else counts[n]
+        trace = go.Heatmap(
+            z=z, x=ticks, y=ticks, name=n, coloraxis="coloraxis",
+            customdata=np.stack([norm[n], counts[n]], axis=-1),
+            hovertemplate=("<b>" + n + "</b><br>True: %{y}<br>Predicted: %{x}<br>"
+                           "%{customdata[0]:.1%} of the true class<br>n=%{customdata[1]:,} samples"
+                           "<extra></extra>"),
+        )
+        if show_values:
+            txt = np.where(
+                counts[n] > 0,
+                np.vectorize(lambda v: f"{v:.0%}")(norm[n]) if normalize else counts[n].astype(str),
+                "",
+            )
+            trace.update(text=txt, texttemplate="%{text}", textfont=dict(size=9))
+        fig.add_trace(trace, row=1, col=j)
+
+    fig.update_xaxes(type="category", categoryorder="array", categoryarray=ticks, tickangle=-90,
+                     title_text="Predicted lithology " + ("code" if label_mode == "code" else ""))
+    fig.update_yaxes(type="category", categoryorder="array", categoryarray=ticks, autorange="reversed")
+    fig.update_yaxes(title_text="True lithology " + ("code" if label_mode == "code" else ""), row=1, col=1)
+
+    top = 1.0 if normalize else float(max(c.max() for c in counts.values()) or 1)
+    fig.update_layout(
+        template=FIGURE_LAYOUT["template"],
+        paper_bgcolor=FIGURE_LAYOUT["paper_bgcolor"],
+        plot_bgcolor=FIGURE_LAYOUT["plot_bgcolor"],
+        font=FIGURE_LAYOUT["font"],
+        coloraxis_colorbar=FIGURE_LAYOUT["coloraxis_colorbar"],
+    )
+    fig.update_layout(
+        height=height,
+        title=dict(text=title, x=0.01) if title else None,
+        margin=dict(l=90, r=20, t=90 if title else 60, b=90),
+        coloraxis=dict(
+            colorscale="Viridis", cmin=0, cmax=top,
+            colorbar=dict(title="Share of true class" if normalize else "Samples",
+                          thickness=14, len=0.9, outlinewidth=0),
+        ),
+    )
+    fig.update_annotations(font_size=14)
     return fig

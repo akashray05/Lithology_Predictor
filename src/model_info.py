@@ -171,21 +171,32 @@ def render_model_guide() -> None:
     def _fmt(metric: str, v: float) -> str:
         return f"{v:.4f}" if metric == "FORCE penalty score" else f"{v:.2f}%"
 
-    text = pd.DataFrame({c: [_fmt(i, v) for i, v in df[c].items()] for c in df.columns}, index=df.index)
-    best = df.idxmax(axis=1)  # higher is better for every row (FORCE penalty is negative: max = closest to 0)
+    # text = pd.DataFrame({c: [_fmt(i, v) for i, v in df[c].items()] for c in df.columns}, index=df.index)
+    text = pd.DataFrame(
+        {
+            str(c): [_fmt(str(i), float(v)) for i, v in df[c].items()]
+            for c in df.columns
+        },
+        index=df.index,
+    )
+    # best = df.idxmax(axis=1)  # higher is better for every row (FORCE penalty is negative: max = closest to 0)
+    best = df.astype(float).idxmax(axis=1).to_dict()
     styled = text.style.apply(
-        lambda row: ["background-color:#d5ddd6;font-weight:600;color:#1e2420" if c == best[row.name] else ""
+        lambda row: ["background-color:#d5ddd6;font-weight:600;color:#1e2420" if c == best.get(str(row.name)) else ""
                      for c in row.index], axis=1)
     st.dataframe(styled, use_container_width=True)
     st.caption(RESULTS_NOTE + " Highlighted = best in each row.")
 
     chart = df.drop(index="FORCE penalty score").reset_index().melt(
         id_vars="Metric", var_name="Model", value_name="Score (%)")
-    fig = px.bar(chart, x="Metric", y="Score (%)", color="Model", barmode="group", text_auto=".1f",
+    fig = px.bar(chart, x="Metric", y="Score (%)", color="Model", barmode="group", text_auto=False,
                  color_discrete_map={m["name"]: m["color"] for m in MODELS})
     fig.update_layout(template="plotly_white", height=420, margin=dict(t=20, b=40),
                       legend=dict(orientation="h", y=1.12, font=dict(size=14)), xaxis_title=None)
-    fig.update_traces(textposition="outside", cliponaxis=False)
+    fig.update_traces(    texttemplate="%{y:.1f}", textposition="outside", cliponaxis=False)
+
+
+
     st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("**How to present the comparison**")

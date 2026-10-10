@@ -14,7 +14,7 @@ upload a well, run all three models, compare them visually and numerically, and 
 ```bash
 cd Lithology_Predictor
 source .venv/bin/activate
-streamlit run app_v2.py
+streamlit run final_app.py
 ```
 
 The app opens at `http://localhost:8501`. To verify the installation first:
@@ -108,7 +108,7 @@ consensus and agreement columns) and metrics (CSV, only when labels exist).
 | `Could not load the trained models` | Check that the `models/` folder contains the `.joblib` and metadata files. |
 | No original track or metrics | The label column is empty or unrecognised; pick it manually in ② Original lithology. |
 | Page looks unstyled or old | Hard-refresh with `Cmd+Shift+R`; confirm `assets/style.css` exists. |
-| Port already in use | `streamlit run app_v2.py --server.port 8502` |
+| Port already in use | `streamlit run final_app.py --server.port 8502` |
 
 ## 7. Short description (for README / GitHub)
 

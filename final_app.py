@@ -1,7 +1,7 @@
-"""LITHO-ML — upgraded Streamlit UI (run: streamlit run app_v2.py).
+"""Lithology prediction workstation.
 
-Same frozen models and inference path as app.py; only the interface and
-analysis views are new.
+Run with: streamlit run final_app.py
+This is the canonical application entry point for the repository.
 """
 
 from __future__ import annotations
@@ -37,6 +37,7 @@ from src.plots_extra import (
     bed_thickness_table,
     boundary_analysis,
     build_confidence_hist,
+    build_confusion_grid,
     build_consensus_figure,
     build_crossplot,
     build_crossplot_compare,
@@ -49,12 +50,28 @@ from src.plots_extra import (
 )
 
 from src.model_info import render_model_guide
-from src.theme import VIVID_COLORS, style_figure
+from src.theme import LITH_COLORS, style_figure
+from src.well_stats import (
+    build_correlation_figure,
+    build_depth_composition_figure,
+    build_histogram_figure,
+    build_kappa_figure,
+    build_mix_figure,
+    build_transition_figure,
+    curve_correlations,
+    curve_summary,
+    interval_stats,
+    lithology_entropy,
+    lithology_mix,
+    pairwise_kappa,
+    transition_matrix,
+    transition_table,
+)
 
 # ============================================================
 # CONFIG + STYLE
 # ============================================================
-st.set_page_config(page_title="LITHO-ML", page_icon="🪨", layout="wide",
+st.set_page_config(page_title="Lithology prediction", page_icon="◆", layout="wide",
                    initial_sidebar_state="expanded")
 
 _css = Path(__file__).parent / "assets" / "style.css"
@@ -88,25 +105,31 @@ def run_inference(file_bytes: bytes, filename: str, label_column: str | None) ->
                         label_column=label_column)
 
 
-def hero(compact: bool = False):
-    sub = ("Upload a well-log file, run three frozen lithology models, and compare them against "
-           "the original lithology — depth by depth."
-           if not compact else "Frozen-model lithology prediction and comparison")
+def masthead(compact: bool = False):
+    sub = ("Upload a LAS or CSV well. Three frozen classifiers assign FORCE lithology "
+           "at each depth; original labels, if present, are used only for comparison."
+           if not compact else
+           "Frozen ExtraTrees, XGBoost and LightGBM · FORCE 2020 lithology codes")
     st.markdown(
         f"""
-        <div class="hero">
-          <h1>🪨 LITHO-ML</h1>
+        <div class="masthead">
+          <div class="kicker">Well-log lithology · 12 classes · 41 frozen features</div>
+          <h1>Lithology prediction</h1>
           <p>{sub}</p>
-          <div class="chips">
-            <span class="chip">12 lithology classes</span>
-            <span class="chip">41 engineered features</span>
-            <span class="chip">3 models: Ex-Tree · XGBoost · LightGBM</span>
-            <span class="chip">FORCE 2020</span>
-          </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+
+def lithology_legend_html() -> str:
+    bits = []
+    for n in LITH_ORDER:
+        bits.append(
+            f'<span class="lith-swatch"><span class="lith-dot" '
+            f'style="background:{LITH_COLORS[n]}"></span>{n}</span>'
+        )
+    return '<div class="lith-key">' + "".join(bits) + "</div>"
 
 
 # ============================================================
@@ -115,20 +138,20 @@ def hero(compact: bool = False):
 try:
     bundle = get_bundle()
 except Exception as exc:
-    hero(compact=True)
+    masthead(compact=True)
     st.error(f"Could not load the trained models: {exc}")
     st.stop()
 
 # ============================================================
 # SIDEBAR 1: MODELS
 # ============================================================
-st.sidebar.markdown("## 🪨 LITHO-ML")
-st.sidebar.caption("Predictions are estimates, not verified geological truth.")
-PAGE_PRED, PAGE_GUIDE = "🪨  Predictor", "📘  Model guide"
+st.sidebar.markdown("## Lithology")
+st.sidebar.caption("Predictions are estimates. They are not a geological interpretation.")
+PAGE_PRED, PAGE_GUIDE = "Well predictor", "Model notes"
 page = st.sidebar.radio("Navigate", [PAGE_PRED, PAGE_GUIDE], label_visibility="collapsed", key="nav")
 selected_models = list(MODEL_OPTIONS)
 if page == PAGE_PRED:
-    with st.sidebar.expander("① Models", expanded=True):
+    with st.sidebar.expander("1. Models", expanded=True):
         selected_models = st.multiselect("Models to display", list(MODEL_OPTIONS),
                                          default=list(MODEL_OPTIONS),
                                          help="Only selected models are plotted, compared and exported.")
@@ -145,8 +168,8 @@ def _uploader():
 
 
 if page == PAGE_GUIDE:
-    hero(compact=True)
-    with st.expander("📂 Uploaded well file (kept while you read the guide)"):
+    masthead(compact=True)
+    with st.expander("Well file (kept while you read the notes)"):
         uploaded_file = _uploader()
     render_model_guide()
     st.stop()
@@ -154,36 +177,26 @@ if page == PAGE_GUIDE:
 uploaded_file = _uploader()
 
 if uploaded_file is None:
-    hero()
-    st.markdown("### How it works")
-    cols = st.columns(4)
-    steps = [
-        ("Upload", "Drop a LAS or CSV well file. A lithology column is optional."),
-        ("Predict", "Features are built exactly as in training; all three frozen models run."),
-        ("Compare", "Depth tracks, consensus, disagreement zones and confidence side by side."),
-        ("Evaluate", "With labels: FORCE score, F1, confusion matrix, boundary and calibration checks."),
-    ]
-    for c, (i, (t, d)) in zip(cols, enumerate(steps, 1)):
-        c.markdown(f'<div class="step-card"><div class="num">{i}</div><h4>{t}</h4><p>{d}</p></div>',
-                   unsafe_allow_html=True)
-
-    st.markdown("### Required input curves")
+    masthead()
+    st.markdown(
+        """
+        <table class="spec-table">
+          <tr><th>File</th><td>.las or .csv. Depth from DEPT / DEPTH, or sample index if missing.</td></tr>
+          <tr><th>Required logs</th><td>GR, RDEP, RMED, DTC, RHOB. Resistivities are log10-transformed; no imputation.</td></tr>
+          <tr><th>Labels</th><td>Optional. FORCE codes (e.g. 65000) or names. Metrics are only computed when labels exist.</td></tr>
+          <tr><th>Models</th><td>Ex-Tree (ExtraTrees), XGBoost, LightGBM — trained on 98 FORCE wells, frozen.</td></tr>
+        </table>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown("**Input curves**")
     cc = st.columns(5)
     for c, name in zip(cc, REQUIRED_CURVES):
         c.metric(name, "required", help=CURVE_HELP[name])
         c.caption(CURVE_HELP[name])
-
-    st.markdown("### Lithology classes")
-    st.markdown(
-        " ".join(
-            f'<span class="chip" style="background:{VIVID_COLORS[n]}22;border-color:{VIVID_COLORS[n]}">'
-            f'<span class="lith-dot" style="background:{VIVID_COLORS[n]}"></span>{n}</span>'
-            for n in LITH_ORDER
-        ),
-        unsafe_allow_html=True,
-    )
-    st.info("Without an original lithology column, only predictions and confidence are shown. "
-            "Accuracy and F1 are never computed without ground truth.")
+    st.markdown("**Lithofacies**")
+    st.markdown(lithology_legend_html(), unsafe_allow_html=True)
+    st.caption("Without original lithology, the app shows predictions and confidence only.")
     st.stop()
 
 if not selected_models:
@@ -206,7 +219,7 @@ if missing_curves:
 # SIDEBAR 2: LABELS
 # ============================================================
 detected = detect_label_column(raw_df.columns)
-with st.sidebar.expander("② Original lithology", expanded=True):
+with st.sidebar.expander("2. Original lithology", expanded=True):
     choice = st.selectbox("True lithology column", ["Auto-detect", "None"] + [str(c) for c in raw_df.columns],
                           help="FORCE codes (e.g. 65000) or names (e.g. Shale).")
     if choice == "Auto-detect":
@@ -250,7 +263,7 @@ def show_label_status():
 # ============================================================
 # SIDEBAR 3: VIEW
 # ============================================================
-with st.sidebar.expander("③ View", expanded=True):
+with st.sidebar.expander("3. View", expanded=True):
     d_min, d_max = float(predictions[depth_col].min()), float(predictions[depth_col].max())
     if d_max > d_min:
         depth_range = st.slider("Depth interval", d_min, d_max, (d_min, d_max),
@@ -281,18 +294,20 @@ labelled_view = view_df[view_df["TRUE_CODE"].notna()] if has_truth else view_df.
 # ============================================================
 # HEADER + STATUS RIBBON
 # ============================================================
-hero(compact=True)
-pill = {"full": ("ok", "labels: full"), "partial": ("part", "labels: partial")}.get(
+masthead(compact=True)
+stamp = {"full": ("ok", "labels complete"), "partial": ("part", "labels partial")}.get(
     label_info["status"], ("none", "no labels"))
 st.markdown(
-    f'<div class="ribbon"><b>{well}</b> · {len(raw_df):,} rows · '
-    f'depth {d_min:,.1f}–{d_max:,.1f} · {len(models)} model(s)'
-    f'<span class="pill {pill[0]}">{pill[1]}</span></div>',
+    f'<div class="well-line"><b>{well}</b>'
+    f'<span>{len(raw_df):,} rows</span>'
+    f'<span>{d_min:,.1f} – {d_max:,.1f}</span>'
+    f'<span>{len(models)} model(s)</span>'
+    f'<span class="stamp {stamp[0]}">{stamp[1]}</span></div>',
     unsafe_allow_html=True,
 )
 
-tab_over, tab_tracks, tab_cmp, tab_eval, tab_geo, tab_data = st.tabs(
-    ["🧭 Overview", "📊 Tracks", "🔀 Compare", "✅ Evaluate", "🧪 Geology", "💾 Export"]
+tab_over, tab_tracks, tab_cmp, tab_eval, tab_geo, tab_stat, tab_data = st.tabs(
+    ["Overview", "Tracks", "Compare", "Evaluate", "Geology", "Statistics", "Export"]
 )
 
 # ------------------------------------------------------------
@@ -311,6 +326,13 @@ with tab_over:
         col = f"{models[0][1]}_CONFIDENCE"
         if col in view_df.columns:
             c4.metric("Mean confidence", f"{view_df[col].mean():.1%}")
+
+    iv = interval_stats(view_df, models, depth_col)
+    c1.caption(f"sample step ≈ {iv['step']:.3g}")
+    if "beds_original" in iv:
+        c3.caption(f"{iv['beds_original']} beds in original")
+    elif "beds_first_model" in iv:
+        c3.caption(f"{iv['beds_first_model']} beds ({models[0][0]})")
 
     left, right = st.columns([3, 2])
     with left:
@@ -414,7 +436,9 @@ with tab_eval:
             y_true = eval_df["TRUE_CODE"].to_numpy().astype(int)
             preds = {n: eval_df[f"{k}_PREDICTION_CODE"].to_numpy().astype(int) for n, k in models}
             metrics = overall_metrics(y_true, preds)
-            best = metrics.loc[metrics["FORCE score"].idxmax()]
+            # best = metrics.loc[metrics["FORCE score"].idxmax()]
+            best_idx = int(metrics["FORCE score"].to_numpy().argmax())
+            best = metrics.iloc[best_idx]
 
             b1, b2, b3, b4 = st.columns(4)
             b1.metric("Labelled samples", f"{len(eval_df):,}")
@@ -431,13 +455,42 @@ with tab_eval:
                     c: st.column_config.NumberColumn(format="%.4f") for c in metrics.columns if c != "Model"})
                 st.caption("Macro/Weighted F1 average over classes present in this well's true labels.")
 
+                # ---- confusion matrices of all selected models, side by side ----
+                st.markdown("### Confusion matrices of the selected models")
+                o1, o2, o3 = st.columns([1.3, 1.3, 1])
+                cm_norm = o1.radio("Show", ["% of true class", "Sample counts"], horizontal=True,
+                                   key="cm_norm") == "% of true class"
+                cm_codes = o2.radio("Axis labels", ["Lithology codes", "Lithology names"], horizontal=True,
+                                    key="cm_labels") == "Lithology codes"
+                cm_values = o3.checkbox("Show values in cells", value=False, key="cm_values")
+                try:
+                    grid_fig = build_confusion_grid(
+                        y_true, preds, normalize=cm_norm, label_mode="code" if cm_codes else "name",
+                        show_values=cm_values,
+                        title=f"{well}: confusion matrices ({len(y_true):,} labelled samples)")
+                    grid_cfg = {"displaylogo": False, "toImageButtonOptions": {
+                        "format": "png", "scale": 2, "filename": f"{well}_confusion_matrices"}}
+                    if len(preds) == 1:                      # keep a single matrix roughly square
+                        left, _ = st.columns([3, 2])
+                        left.plotly_chart(grid_fig, use_container_width=True, config=grid_cfg)
+                    else:
+                        st.plotly_chart(grid_fig, use_container_width=True, config=grid_cfg)
+                    st.caption("Rows = true lithology, columns = predicted lithology. In '% of true class' "
+                               "mode each row sums to 100%, so a bright diagonal means that lithology is "
+                               "recovered and bright off-diagonal cells show what it is confused with. All "
+                               "panels use the same samples, axes and colour scale. Results are for this "
+                               "well only.")
+                except ValueError as exc:
+                    st.warning(str(exc))
+
             with sub_cm:
+                # ---- one model in detail (the side-by-side grid is on the Metrics tab) ----
                 cm_cols = st.columns([2, 1])
                 cm_model = cm_cols[0].selectbox("Model", [n for n, _ in models], key="cm_model")
-                cm_norm = cm_cols[1].radio("Show", ["% of true class", "Sample counts"],
-                                           horizontal=True) == "% of true class"
+                cm_norm_one = cm_cols[1].radio("Show", ["% of true class", "Sample counts"],
+                                               horizontal=True, key="cm_norm_one") == "% of true class"
                 counts, labels = confusion_counts(y_true, preds[cm_model])
-                st.plotly_chart(build_confusion_figure(counts, labels, normalize=cm_norm),
+                st.plotly_chart(build_confusion_figure(counts, labels, normalize=cm_norm_one),
                                 use_container_width=True)
                 st.dataframe(per_class_report(y_true, preds[cm_model]), hide_index=True,
                              use_container_width=True, column_config={
@@ -524,6 +577,119 @@ with tab_geo:
             "Max thickness": st.column_config.NumberColumn(format="%.2f")})
         st.caption("Many thin beds in a prediction vs. the reference suggests salt-and-pepper noise "
                    "(a case for using neighbouring-depth context).")
+
+# ------------------------------------------------------------
+# STATISTICS
+# ------------------------------------------------------------
+with tab_stat:
+    st.caption("Descriptive statistics for the displayed depth interval. These are well-log summaries, "
+               "not a substitute for the blind-test report.")
+    mix = lithology_mix(view_df, models, depth_col, include_true=has_truth)
+    s_curves, s_mix, s_depth, s_agree = st.tabs(
+        ["Log curves", "Lithology mix", "Depth composition", "Transitions & agreement"]
+    )
+
+    with s_curves:
+        summ = curve_summary(view_df)
+        st.dataframe(summ, hide_index=True, use_container_width=True, column_config={
+            "Missing %": st.column_config.NumberColumn(format="%.1f"),
+            **{c: st.column_config.NumberColumn(format="%.3f")
+               for c in ["Min", "P10", "P50", "Mean", "P90", "Max", "Std"]},
+        })
+        st.caption("RDEP and RMED percentiles use positive values only (as logged in training).")
+        left, right = st.columns(2)
+        with left:
+            h_curve = st.selectbox("Histogram curve", [c for c in REQUIRED_CURVES if c in view_df.columns])
+            sources = {}
+            if has_truth:
+                sources["Original lithology"] = "TRUE_LITHOLOGY"
+            for n, k in models:
+                sources[n] = f"{k}_PREDICTION"
+            h_src = st.selectbox(
+                "Colour by",
+                list(sources),
+                key="crossplot_colour_by",
+            )
+            try:
+                st.plotly_chart(
+                    build_histogram_figure(view_df, h_curve, sources[h_src],
+                                           log_x=h_curve in {"RDEP", "RMED"}),
+                    use_container_width=True)
+            except ValueError as exc:
+                st.warning(str(exc))
+        with right:
+            st.markdown("**Spearman rank correlation**")
+            st.caption("Resistivities are log10-transformed before the correlation.")
+            st.plotly_chart(build_correlation_figure(curve_correlations(view_df)),
+                            use_container_width=True)
+
+    with s_mix:
+        if mix.empty:
+            st.info("No lithology assignments in this interval.")
+        else:
+            a, b = st.columns([3, 2])
+            with a:
+                st.plotly_chart(build_mix_figure(mix), use_container_width=True)
+            with b:
+                st.markdown("**Mix entropy**")
+                ent = lithology_entropy(mix)
+                st.dataframe(ent, hide_index=True, use_container_width=True, column_config={
+                    "Entropy (bits)": st.column_config.NumberColumn(format="%.3f"),
+                    "Max entropy (12 classes)": st.column_config.NumberColumn(format="%.3f"),
+                })
+                st.caption("Entropy is high when many lithologies share the interval; "
+                           "low when one class dominates.")
+            st.dataframe(mix, hide_index=True, use_container_width=True, column_config={
+                "Net thickness": st.column_config.NumberColumn(format="%.2f"),
+                "Fraction": st.column_config.NumberColumn(format="%.3f"),
+            })
+
+    with s_depth:
+        src_map = {}
+        if has_truth:
+            src_map["Original lithology"] = "TRUE_LITHOLOGY"
+        for n, k in models:
+            src_map[n] = f"{k}_PREDICTION"
+        dcol, bins_col = st.columns([2, 1])
+        d_src = dcol.selectbox("Source", list(src_map), key="comp_src")
+        n_bins = bins_col.slider("Depth bins", 8, 40, 20)
+        try:
+            st.plotly_chart(
+                build_depth_composition_figure(view_df, src_map[d_src], depth_col, bins=n_bins),
+                use_container_width=True)
+        except ValueError as exc:
+            st.warning(str(exc))
+        st.caption("Stacked fraction of lithology in equal-thickness depth bins. "
+                   "Use it to see where the section is shale-prone, sand-prone, or mixed.")
+
+    with s_agree:
+        t_map = {}
+        if has_truth:
+            t_map["Original lithology"] = "TRUE_LITHOLOGY"
+        for n, k in models:
+            t_map[n] = f"{k}_PREDICTION"
+        t_src = st.selectbox("Transitions from", list(t_map), key="trans_src")
+        trans = transition_table(view_df, t_map[t_src], depth_col)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Bed-to-bed contacts**")
+            try:
+                st.plotly_chart(build_transition_figure(transition_matrix(trans)),
+                                use_container_width=True)
+            except ValueError as exc:
+                st.info(str(exc))
+            if not trans.empty:
+                st.dataframe(trans.head(20), hide_index=True, use_container_width=True)
+        with c2:
+            st.markdown("**Cohen's kappa**")
+            st.caption("Agreement beyond chance. 1 is identical assignments; 0 is chance level. "
+                       "Kappa with Original is only shown when labels exist.")
+            if len(models) < 2 and not has_truth:
+                st.info("Need at least two models, or original labels, to compute kappa.")
+            else:
+                kap = pairwise_kappa(view_df, models)
+                st.plotly_chart(build_kappa_figure(kap), use_container_width=True)
+                st.dataframe(kap.round(3), use_container_width=True)
 
 # ------------------------------------------------------------
 # EXPORT
